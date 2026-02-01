@@ -1,12 +1,13 @@
 const { makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const { Boom } = require('@hapi/boom');
-// دیگر نیازی به qrcode-terminal نیست چون لینک چاپ می‌کنیم
+const http = require('http'); // ماژول ساخته شده در نود جی‌اس (بدون نصب اضافی)
 
 // --- تنظیمات ---
 const LINK_REGEX = /(https?:\/\/[^\s]+)/g;
 const MAX_VIOLATIONS = 2; 
 const SESSION_ID = 'session';
+const PORT = process.env.PORT || 3000; // پورت رندر یا پیش‌فرض
 
 // --- پیام معرفی ---
 const BOT_INTRO = `🤖✨ سلام! من ربات چندمنظوره AI LAB هستم
@@ -52,11 +53,9 @@ async function startBot() {
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
-        // تولید لینک QR برای اسکن راحت‌تر در رندر
         if (qr) {
             console.log('-------------------------------------------');
             console.log('📲 Scan this QR Code:');
-            // تبدیل کد QR به لینک تصویر
             console.log(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
             console.log('-------------------------------------------');
         }
@@ -136,4 +135,13 @@ async function checkIsAdmin(sock, groupJid, userJid) {
     return groupAdmins[groupJid].includes(userJid);
 }
 
-startBot();
+// --- راه‌اندازی سرور وب برای UptimeRobot ---
+const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot is alive'); // این پاسخ به UptimeRobot می‌دهد
+});
+
+server.listen(PORT, () => {
+    console.log(`HTTP Server running on port ${PORT}`);
+    startBot(); // شروع بات بعد از روشن شدن سرور
+});
