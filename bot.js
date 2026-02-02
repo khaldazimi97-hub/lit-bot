@@ -4,7 +4,8 @@ const { Boom } = require('@hapi/boom');
 const http = require('http'); // ماژول ساخته شده در نود جی‌اس (بدون نصب اضافی)
 
 // --- تنظیمات ---
-const LINK_REGEX = /(https?:\/\/[^\s]+)/g;
+const LINK_REGEX = /((https?:\/\/)?(www\.)?[\w-]+\.[\w./?=&%-]+)/i;
+
 const MAX_VIOLATIONS = 2; 
 const SESSION_ID = 'session';
 const PORT = process.env.PORT || 3000; // پورت رندر یا پیش‌فرض
@@ -83,42 +84,62 @@ async function startBot() {
     });
 
     // --- مدیریت پیام‌ها ---
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
+sock.ev.on('messages.upsert', async ({ messages, type }) => {
+    if (type !== 'notify') return;
 
-        for (const msg of messages) {
-            if (!msg.message) continue;
-            if (msg.key.fromMe) continue;
+    for (const msg of messages) {
+        if (!msg.message) continue;
+        if (msg.key.fromMe) continue;
 
-            const remoteJid = msg.key.remoteJid;
-            const senderJid = msg.key.participant || msg.key.remoteJid;
+        const remoteJid = msg.key.remoteJid;
+        const senderJid = msg.key.participant || msg.key.remoteJid;
 
-            if (!remoteJid.endsWith('@g.us')) continue;
+        if (!remoteJid.endsWith('@g.us')) continue;
 
-            const messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+        const messageContent = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
 
-            if (!LINK_REGEX.test(messageContent)) continue;
+        if (!LINK_REGEX.test(messageContent)) continue;
 
-            const isAdmin = await checkIsAdmin(sock, remoteJid, senderJid);
-            if (isAdmin) continue;
+        const isAdmin = await checkIsAdmin(sock, remoteJid, senderJid);
+        if (isAdmin) continue;
 
+        // --- همیشه لینک رو حذف می‌کنیم ---
+        try {
             await sock.sendMessage(remoteJid, { delete: msg.key });
             console.log(`🗑️ Deleted link from: ${senderJid.split('@')[0]}`);
+        } catch (e) {
+            console.error('Error deleting message:', e);
+        }
 
-            const currentCount = (userLinkCounts[senderJid] || 0) + 1;
-            userLinkCounts[senderJid] = currentCount;
+        // --- شمارش لینک‌ها ---
+        const currentCount = (userLinkCounts[senderJid] || 0) + 1;
+        userLinkCounts[senderJid] = currentCount;
 
-            if (currentCount >= MAX_VIOLATIONS) {
-                console.log(`🔴 Removing user: ${senderJid.split('@')[0]}`);
-                try {
-                    await sock.groupParticipantsUpdate(remoteJid, [senderJid], "remove");
-                    delete userLinkCounts[senderJid];
-                } catch (e) {
-                    console.error("Error removing user:", e);
-                }
+        // --- هشدار اولین بار ---
+        if (currentCount === 1) {
+            await sock.sendMessage(remoteJid, {
+                text: `⚠️ ${senderJid.split('@')[0]}،دفعه اول و اخرت  باشه جوان  اگه نی مستقیم فضا ☢️☣️⚠️.    ربات گزمه ضد لینک خالد👨‍💻☠️🍬`
+            });
+            console.log(`⚠️ Warned user: ${senderJid.split('@')[0]}`);
+        }
+
+        // --- حذف کاربر ---
+        if (currentCount >= MAX_VIOLATIONS) {
+            try {
+                await sock.groupParticipantsUpdate(remoteJid, [senderJid], "remove");
+                await sock.sendMessage(remoteJid, {
+                    text: `❌ ${senderJid.split('@')[0]} برای بچیم تو نشدی ده گپ ادم🖕  ربات گزمه ضد لینک خالد 🧑‍💻`
+                });
+                console.log(`🔴 Removed user: ${senderJid.split('@')[0]}`);
+                delete userLinkCounts[senderJid];
+            } catch (e) {
+                console.error("Error removing user:", e);
             }
         }
-    });
+    }
+});
+
+
 }
 
 async function checkIsAdmin(sock, groupJid, userJid) {
